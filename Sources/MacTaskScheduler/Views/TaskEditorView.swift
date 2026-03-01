@@ -2,12 +2,14 @@ import SwiftUI
 import AppKit
 
 struct TaskEditorView: View {
+    @EnvironmentObject private var i18n: I18N
     @State private var draft: TaskItem
 
     let onCancel: () -> Void
     let onSave: (TaskItem) -> Void
 
     @State private var errorMessage = ""
+    @State private var intervalValueText = ""
 
     init(task: TaskItem, onCancel: @escaping () -> Void, onSave: @escaping (TaskItem) -> Void) {
         _draft = State(initialValue: task)
@@ -16,38 +18,17 @@ struct TaskEditorView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(draft.name.isEmpty ? "Create Task" : "Edit Task")
+        VStack(alignment: .leading, spacing: 12) {
+            Text(draft.name.isEmpty ? i18n.t("editor.create") : i18n.t("editor.edit"))
                 .font(.title3)
                 .bold()
 
-            Form {
-                TextField("Task Name", text: $draft.name)
-
-                LabeledContent("Script Path") {
-                    pathEditor(path: $draft.scriptPath, chooseDirectories: false)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    baseInfoSection
+                    scheduleSection
                 }
-
-                TextField("Arguments (space-separated)", text: $draft.arguments)
-
-                LabeledContent("Working Directory") {
-                    pathEditor(path: $draft.workingDirectory, chooseDirectories: true)
-                }
-
-                Toggle("Enabled", isOn: $draft.isEnabled)
-
-                Picker("Schedule Type", selection: $draft.schedule.kind) {
-                    ForEach(ScheduleKind.allCases) { kind in
-                        Text(kind.displayName).tag(kind)
-                    }
-                }
-                .onChange(of: draft.schedule.kind) { _, newValue in
-                    if newValue == .weekly && draft.schedule.weekdays.isEmpty {
-                        draft.schedule.weekdays = [2]
-                    }
-                }
-
-                scheduleFields
+                .padding(.vertical, 6)
             }
 
             if !errorMessage.isEmpty {
@@ -57,30 +38,99 @@ struct TaskEditorView: View {
 
             HStack {
                 Spacer()
-                Button("Cancel", action: onCancel)
-                Button("Save") {
+                Button(i18n.t("btn.cancel"), action: onCancel)
+                Button(i18n.t("btn.save")) {
                     saveAction()
                 }
                 .keyboardShortcut(.defaultAction)
             }
         }
         .padding(20)
+        .onAppear {
+            intervalValueText = draft.schedule.intervalValue() == 1 ? "" : String(draft.schedule.intervalValue())
+        }
+    }
+
+    private var baseInfoSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                labeledField(i18n.t("editor.name")) {
+                    TextField("", text: $draft.name)
+                }
+
+                labeledField(i18n.t("editor.script_path")) {
+                    pathEditor(path: $draft.scriptPath, chooseDirectories: false, placeholder: "/Users/me/scripts/run.sh")
+                }
+
+                labeledField(i18n.t("editor.args")) {
+                    TextField("", text: $draft.arguments)
+                }
+
+                labeledField(i18n.t("editor.working_dir")) {
+                    pathEditor(path: $draft.workingDirectory, chooseDirectories: true, placeholder: "/Users/me/project")
+                }
+
+                Toggle(i18n.t("enabled"), isOn: $draft.isEnabled)
+            }
+        } label: {
+            Text(i18n.t("editor.base_info"))
+        }
+    }
+
+    private var scheduleSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker(i18n.t("editor.schedule_type"), selection: $draft.schedule.kind) {
+                    ForEach(ScheduleKind.allCases) { kind in
+                        Text(scheduleKindTitle(kind)).tag(kind)
+                    }
+                }
+                .onChange(of: draft.schedule.kind) { newValue in
+                    if newValue == .weekly && draft.schedule.weekdays.isEmpty {
+                        draft.schedule.weekdays = [2]
+                    }
+                    if newValue == .everyInterval {
+                        intervalValueText = draft.schedule.intervalValue() == 1 ? "" : String(draft.schedule.intervalValue())
+                    }
+                }
+
+                scheduleFields
+            }
+        } label: {
+            Text(i18n.t("editor.schedule_config"))
+        }
     }
 
     @ViewBuilder
     private var scheduleFields: some View {
         switch draft.schedule.kind {
         case .once:
-            DatePicker("Run At", selection: $draft.schedule.runAt)
+            DatePicker(i18n.t("editor.run_at"), selection: $draft.schedule.runAt)
 
         case .everyInterval:
-            Stepper(value: $draft.schedule.intervalMinutes, in: 1...10080) {
-                Text("Every \(draft.schedule.intervalMinutes) minute(s)")
+            HStack {
+                Text(i18n.t("editor.interval.every"))
+                TextField("", text: $intervalValueText)
+                    .frame(width: 120)
+                    .onChange(of: intervalValueText) { newValue in
+                        let numeric = Int(newValue.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1
+                        draft.schedule.setInterval(value: max(1, numeric), unit: draft.schedule.intervalUnit)
+                    }
+                Picker(i18n.t("editor.interval.unit"), selection: $draft.schedule.intervalUnit) {
+                    Text(i18n.t("editor.interval.minute")).tag(IntervalUnit.minute)
+                    Text(i18n.t("editor.interval.hour")).tag(IntervalUnit.hour)
+                    Text(i18n.t("editor.interval.day")).tag(IntervalUnit.day)
+                }
+                .frame(width: 190)
+                .onChange(of: draft.schedule.intervalUnit) { unit in
+                    let numeric = Int(intervalValueText.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1
+                    draft.schedule.setInterval(value: max(1, numeric), unit: unit)
+                }
             }
 
         case .weekly:
             HStack {
-                Text("Weekdays")
+                Text(i18n.t("editor.weekdays"))
                 ForEach(1...7, id: \.self) { day in
                     Button(WeekdayMapper.label(for: day)) {
                         toggleWeekday(day)
@@ -92,21 +142,26 @@ struct TaskEditorView: View {
             timePicker
 
         case .monthly:
-            Stepper(value: $draft.schedule.dayOfMonth, in: 1...31) {
-                Text("Day of Month: \(draft.schedule.dayOfMonth)")
+            HStack {
+                Text(i18n.t("editor.day_of_month"))
+                TextField("", value: $draft.schedule.dayOfMonth, formatter: NumberFormatter.integer)
+                    .frame(width: 120)
             }
             timePicker
 
         case .everyXDays:
-            Stepper(value: $draft.schedule.everyXDays, in: 1...365) {
-                Text("Every \(draft.schedule.everyXDays) day(s)")
+            HStack {
+                Text(i18n.t("editor.interval.every"))
+                TextField("", value: $draft.schedule.everyXDays, formatter: NumberFormatter.integer)
+                    .frame(width: 120)
+                Text(i18n.t("editor.interval.day"))
             }
-            DatePicker("Anchor Date", selection: $draft.schedule.anchorDate, displayedComponents: [.date])
+            DatePicker(i18n.t("editor.anchor_date"), selection: $draft.schedule.anchorDate, displayedComponents: [.date])
             timePicker
 
         case .cron:
-            TextField("Cron expression (m h dom mon dow)", text: $draft.schedule.cronExpression)
-            Text("Example: */30 * * * *")
+            TextField(i18n.t("editor.cron"), text: $draft.schedule.cronExpression)
+            Text(i18n.t("editor.example"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -114,7 +169,7 @@ struct TaskEditorView: View {
 
     private var timePicker: some View {
         DatePicker(
-            "Time",
+            i18n.t("editor.time"),
             selection: Binding(
                 get: {
                     Calendar.current.date(from: DateComponents(hour: draft.schedule.hour, minute: draft.schedule.minute)) ?? Date()
@@ -129,29 +184,40 @@ struct TaskEditorView: View {
         )
     }
 
+    private func labeledField<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .frame(width: 120, alignment: .leading)
+            content()
+        }
+    }
+
     private func saveAction() {
         errorMessage = ""
 
         guard !draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            errorMessage = "Task name is required."
+            errorMessage = i18n.t("editor.err.name")
             return
         }
 
         guard !draft.scriptPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            errorMessage = "Script path is required."
+            errorMessage = i18n.t("editor.err.script")
             return
         }
 
         if draft.schedule.kind == .weekly && draft.schedule.weekdays.isEmpty {
-            errorMessage = "Please select at least one weekday."
+            errorMessage = i18n.t("editor.err.weekday")
             return
         }
 
         if draft.schedule.kind == .cron,
            CronCalculator.nextDate(expression: draft.schedule.cronExpression, after: Date()) == nil {
-            errorMessage = "Cron expression is invalid or unsupported."
+            errorMessage = i18n.t("editor.err.cron")
             return
         }
+
+        draft.schedule.dayOfMonth = min(max(draft.schedule.dayOfMonth, 1), 31)
+        draft.schedule.everyXDays = min(max(draft.schedule.everyXDays, 1), 365)
 
         onSave(draft)
     }
@@ -165,10 +231,21 @@ struct TaskEditorView: View {
         }
     }
 
-    private func pathEditor(path: Binding<String>, chooseDirectories: Bool) -> some View {
+    private func scheduleKindTitle(_ kind: ScheduleKind) -> String {
+        switch kind {
+        case .once: return i18n.t("schedule.once")
+        case .everyInterval: return i18n.t("schedule.every_interval")
+        case .weekly: return i18n.t("schedule.weekly")
+        case .monthly: return i18n.t("schedule.monthly")
+        case .everyXDays: return i18n.t("schedule.every_x_days")
+        case .cron: return i18n.t("schedule.cron")
+        }
+    }
+
+    private func pathEditor(path: Binding<String>, chooseDirectories: Bool, placeholder: String) -> some View {
         HStack {
-            TextField(chooseDirectories ? "Directory path" : "Script path", text: path)
-            Button("Browse") {
+            TextField(placeholder, text: path)
+            Button(i18n.t("browse")) {
                 if let selected = openPanel(chooseDirectories: chooseDirectories) {
                     path.wrappedValue = selected
                 }
@@ -185,4 +262,13 @@ struct TaskEditorView: View {
         panel.prompt = "Select"
         return panel.runModal() == .OK ? panel.url?.path : nil
     }
+}
+
+private extension NumberFormatter {
+    static let integer: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .none
+        formatter.minimum = 1
+        return formatter
+    }()
 }

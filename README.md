@@ -5,6 +5,7 @@
 ## 功能
 
 - 任务管理：新增、修改、删除、查询（搜索）
+- 多语言切换：中文、英文、德文、韩文、日文、阿拉伯文、俄文、法文、西班牙文
 - 任务字段：
   - 名称
   - 脚本路径
@@ -13,7 +14,7 @@
   - 启用/禁用
 - 频次类型：
   - 单次执行（Run Once）
-  - 每 X 分钟循环（Repeat Every X Minutes）
+  - 每 X 分钟/小时/天循环（可手工输入数字）
   - 指定星期 + 时间（Specific Weekdays）
   - 指定每月第几天 + 时间（Specific Day of Month）
   - 每 X 天 + 锚点日期 + 时间（Every X Days）
@@ -21,7 +22,8 @@
 - 执行能力：
   - 定时触发
   - 手动立即执行（Run Now）
-  - 展示最近一次输出、退出码、上次/下次执行时间
+  - 日志展示批次号、开始时间、结束时间、带时间戳输出
+  - 内置脚本帮助（shebang 与 chmod 示例）
 
 ## 技术设计
 
@@ -53,14 +55,14 @@
 ### 1) 命令行直接运行
 
 ```bash
-cd "/Users/panhuahuang/Documents/New project"
+cd "/Users/me/Documents/MacTaskScheduler"
 swift run
 ```
 
 ### 2) Release 构建
 
 ```bash
-cd "/Users/panhuahuang/Documents/New project"
+cd "/Users/me/Documents/MacTaskScheduler"
 swift build -c release
 ```
 
@@ -73,7 +75,7 @@ swift build -c release
 ### 3) 打包为 `.app`
 
 ```bash
-cd "/Users/panhuahuang/Documents/New project"
+cd "/Users/me/Documents/MacTaskScheduler"
 ./scripts/package_app.sh
 ```
 
@@ -100,6 +102,7 @@ cp -R ".build/release/MacTaskScheduler.app" /Applications/
 3. 选择执行频次。
 4. 保存后任务会计算 `Next Run` 并自动调度。
 5. 在详情页可 `Run Now`、启停、编辑、删除。
+6. 点击 `Help` 查看脚本文件头与执行权限示例。
 
 ## 注意事项
 

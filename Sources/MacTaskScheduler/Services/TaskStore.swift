@@ -14,17 +14,22 @@ final class TaskStore: ObservableObject {
     }
 
     func upsert(_ task: TaskItem) {
-        if let index = tasks.firstIndex(where: { $0.id == task.id }) {
-            tasks[index] = task
+        var mutable = task
+        mutable.modifiedAt = Date()
+
+        if let index = tasks.firstIndex(where: { $0.id == mutable.id }) {
+            tasks[index] = mutable
         } else {
-            tasks.append(task)
+            tasks.append(mutable)
         }
         recalculateNextRuns()
+        publishNow()
         save()
     }
 
     func delete(ids: Set<UUID>) {
         tasks.removeAll { ids.contains($0.id) }
+        publishNow()
         save()
     }
 
@@ -33,30 +38,79 @@ final class TaskStore: ObservableObject {
         tasks[index].isEnabled = isEnabled
         tasks[index].isRunning = false
         tasks[index].nextRunAt = isEnabled ? tasks[index].schedule.nextRunDate(after: Date()) : nil
+        tasks[index].modifiedAt = Date()
+        publishNow()
         save()
     }
 
-    func markRunning(id: UUID, running: Bool) {
-        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
-        tasks[index].isRunning = running
+    func markRunStarted(id: UUID, startedAt: Date, source: RunTriggerSource) -> (batchID: String, roundNumber: Int)? {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return nil }
+
+        tasks[index].isRunning = true
+        tasks[index].runSequence += 1
+        let round = tasks[index].runSequence
+        let batchID = "R\(round)-\(Int(startedAt.timeIntervalSince1970))"
+
+        let startMessage = "[\(DateFormatters.log.string(from: startedAt))] Started"
+        tasks[index].lastRunAt = startedAt
+        tasks[index].lastOutput = startMessage
+        tasks[index].modifiedAt = Date()
+
+        let runningLog = ExecutionLog(
+            roundNumber: round,
+            batchID: batchID,
+            source: source,
+            startedAt: startedAt,
+            finishedAt: startedAt,
+            exitCode: ExecutionLog.runningExitCode,
+            output: startMessage
+        )
+        tasks[index].logs.insert(runningLog, at: 0)
+        if tasks[index].logs.count > 100 {
+            tasks[index].logs = Array(tasks[index].logs.prefix(100))
+        }
+
+        publishNow()
         save()
+        return (batchID, round)
     }
 
-    func updateRunResult(id: UUID, exitCode: Int32, output: String, ranAt: Date) {
+    func updateRunResult(id: UUID, batchID: String, startedAt: Date, source: RunTriggerSource, result: TaskRunResult) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
 
-        tasks[index].lastRunAt = ranAt
-        tasks[index].lastExitCode = exitCode
-        tasks[index].lastOutput = output
+        let stampedOutput = timestampOutput(result.output, time: result.finishedAt)
+        tasks[index].lastRunAt = startedAt
+        tasks[index].lastExitCode = result.exitCode
+        tasks[index].lastOutput = stampedOutput
         tasks[index].isRunning = false
+        tasks[index].modifiedAt = Date()
+
+        if let logIndex = tasks[index].logs.firstIndex(where: { $0.batchID == batchID }) {
+            tasks[index].logs[logIndex].finishedAt = result.finishedAt
+            tasks[index].logs[logIndex].exitCode = result.exitCode
+            tasks[index].logs[logIndex].output = stampedOutput
+        } else {
+            let round = max(tasks[index].runSequence, 1)
+            let log = ExecutionLog(
+                roundNumber: round,
+                batchID: batchID,
+                source: source,
+                startedAt: startedAt,
+                finishedAt: result.finishedAt,
+                exitCode: result.exitCode,
+                output: stampedOutput
+            )
+            tasks[index].logs.insert(log, at: 0)
+        }
 
         if tasks[index].schedule.kind == .once {
             tasks[index].isEnabled = false
             tasks[index].nextRunAt = nil
         } else if tasks[index].isEnabled {
-            tasks[index].nextRunAt = tasks[index].schedule.nextRunDate(after: ranAt)
+            tasks[index].nextRunAt = tasks[index].schedule.nextRunDate(after: startedAt)
         }
 
+        publishNow()
         save()
     }
 
@@ -94,6 +148,23 @@ final class TaskStore: ObservableObject {
         } catch {
             print("Failed to save tasks: \(error)")
         }
+    }
+
+    private func publishNow() {
+        // Force a publish for in-place element mutations so UI updates immediately.
+        tasks = Array(tasks)
+    }
+
+    private func timestampOutput(_ output: String, time: Date) -> String {
+        if output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "[\(DateFormatters.log.string(from: time))] (No output)"
+        }
+
+        let stamp = "[\(DateFormatters.log.string(from: time))] "
+        return output
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { stamp + String($0) }
+            .joined(separator: "\n")
     }
 
     private static func makeStorageURL() -> URL {

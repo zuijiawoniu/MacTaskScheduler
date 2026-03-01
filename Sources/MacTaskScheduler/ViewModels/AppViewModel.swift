@@ -11,8 +11,16 @@ final class AppViewModel: ObservableObject {
     let store = TaskStore()
 
     private let scheduler = SchedulerEngine()
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
+        store.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+
         scheduler.start { [weak self] in
             self?.tick()
         }
@@ -20,15 +28,15 @@ final class AppViewModel: ObservableObject {
 
     var filteredTasks: [TaskItem] {
         if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return sorted(store.tasks)
+            return store.tasks
         }
 
         let keyword = searchText.lowercased()
-        return sorted(store.tasks.filter {
+        return store.tasks.filter {
             $0.name.lowercased().contains(keyword) ||
             $0.scriptPath.lowercased().contains(keyword) ||
             $0.schedule.descriptionText().lowercased().contains(keyword)
-        })
+        }
     }
 
     func openCreate() {
@@ -38,6 +46,13 @@ final class AppViewModel: ObservableObject {
 
     func openEdit() {
         guard let selectedTaskID, let task = store.task(by: selectedTaskID) else { return }
+        editingTask = task
+        showEditor = true
+    }
+
+    func openEdit(id: UUID) {
+        selectedTaskID = id
+        guard let task = store.task(by: id) else { return }
         editingTask = task
         showEditor = true
     }
@@ -63,9 +78,14 @@ final class AppViewModel: ObservableObject {
         store.setEnabled(id: selectedTaskID, isEnabled: enabled)
     }
 
+    func setEnabled(id: UUID, enabled: Bool) {
+        store.setEnabled(id: id, isEnabled: enabled)
+    }
+
     func runSelectedNow() {
         guard let selectedTaskID else { return }
-        runTask(id: selectedTaskID)
+        self.selectedTaskID = selectedTaskID
+        runTask(id: selectedTaskID, source: .manual)
     }
 
     func tick() {
@@ -74,32 +94,21 @@ final class AppViewModel: ObservableObject {
         for task in store.tasks where task.isEnabled && !task.isRunning {
             guard let next = task.nextRunAt else { continue }
             if next <= now {
-                runTask(id: task.id)
+                runTask(id: task.id, source: .scheduled)
             }
         }
     }
 
-    private func runTask(id: UUID) {
+    private func runTask(id: UUID, source: RunTriggerSource) {
         guard let task = store.task(by: id), !task.isRunning else { return }
 
-        store.markRunning(id: id, running: true)
         let runAt = Date()
+        guard let running = store.markRunStarted(id: id, startedAt: runAt, source: source) else { return }
 
         TaskRunner.run(task: task) { [weak self] result in
             Task { @MainActor in
-                self?.store.updateRunResult(id: id, exitCode: result.exitCode, output: result.output, ranAt: runAt)
+                self?.store.updateRunResult(id: id, batchID: running.batchID, startedAt: runAt, source: source, result: result)
             }
-        }
-    }
-
-    private func sorted(_ tasks: [TaskItem]) -> [TaskItem] {
-        tasks.sorted { lhs, rhs in
-            let lhsDate = lhs.nextRunAt ?? .distantFuture
-            let rhsDate = rhs.nextRunAt ?? .distantFuture
-            if lhsDate == rhsDate {
-                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-            }
-            return lhsDate < rhsDate
         }
     }
 }

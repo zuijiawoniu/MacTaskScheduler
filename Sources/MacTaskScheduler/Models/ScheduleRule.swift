@@ -9,15 +9,20 @@ enum ScheduleKind: String, Codable, CaseIterable, Identifiable {
     case cron
 
     var id: String { rawValue }
+}
 
-    var displayName: String {
+enum IntervalUnit: String, Codable, CaseIterable, Identifiable {
+    case minute
+    case hour
+    case day
+
+    var id: String { rawValue }
+
+    var minuteMultiplier: Int {
         switch self {
-        case .once: return "Run Once"
-        case .everyInterval: return "Repeat Every X Minutes"
-        case .weekly: return "Specific Weekdays"
-        case .monthly: return "Specific Day of Month"
-        case .everyXDays: return "Every X Days"
-        case .cron: return "Cron Expression"
+        case .minute: return 1
+        case .hour: return 60
+        case .day: return 1440
         }
     }
 }
@@ -27,6 +32,7 @@ struct ScheduleRule: Codable, Equatable {
 
     var runAt: Date
     var intervalMinutes: Int
+    var intervalUnit: IntervalUnit
     var weekdays: [Int]
     var dayOfMonth: Int
     var hour: Int
@@ -40,6 +46,7 @@ struct ScheduleRule: Codable, Equatable {
         self.kind = kind
         self.runAt = now
         self.intervalMinutes = 60
+        self.intervalUnit = .hour
         self.weekdays = [2]
         self.dayOfMonth = 1
         self.hour = 9
@@ -47,6 +54,33 @@ struct ScheduleRule: Codable, Equatable {
         self.everyXDays = 1
         self.anchorDate = now
         self.cronExpression = "*/15 * * * *"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let now = Date()
+
+        kind = try container.decodeIfPresent(ScheduleKind.self, forKey: .kind) ?? .once
+        runAt = try container.decodeIfPresent(Date.self, forKey: .runAt) ?? now
+        intervalMinutes = max(1, try container.decodeIfPresent(Int.self, forKey: .intervalMinutes) ?? 60)
+        intervalUnit = try container.decodeIfPresent(IntervalUnit.self, forKey: .intervalUnit) ?? .hour
+        weekdays = try container.decodeIfPresent([Int].self, forKey: .weekdays) ?? [2]
+        dayOfMonth = try container.decodeIfPresent(Int.self, forKey: .dayOfMonth) ?? 1
+        hour = try container.decodeIfPresent(Int.self, forKey: .hour) ?? 9
+        minute = try container.decodeIfPresent(Int.self, forKey: .minute) ?? 0
+        everyXDays = try container.decodeIfPresent(Int.self, forKey: .everyXDays) ?? 1
+        anchorDate = try container.decodeIfPresent(Date.self, forKey: .anchorDate) ?? now
+        cronExpression = try container.decodeIfPresent(String.self, forKey: .cronExpression) ?? "*/15 * * * *"
+    }
+
+    func intervalValue() -> Int {
+        let divisor = max(1, intervalUnit.minuteMultiplier)
+        return max(1, intervalMinutes / divisor)
+    }
+
+    mutating func setInterval(value: Int, unit: IntervalUnit) {
+        intervalUnit = unit
+        intervalMinutes = max(1, value) * unit.minuteMultiplier
     }
 
     func nextRunDate(after current: Date) -> Date? {
@@ -132,7 +166,8 @@ struct ScheduleRule: Codable, Equatable {
         case .once:
             return "Once @ \(DateFormatters.full.string(from: runAt))"
         case .everyInterval:
-            return "Every \(max(intervalMinutes, 1)) minute(s)"
+            let value = intervalValue()
+            return "Every \(value) \(intervalUnit.rawValue)(s)"
         case .weekly:
             let dayText = weekdays.sorted().map(WeekdayMapper.label(for:)).joined(separator: ",")
             return "Weekly [\(dayText)] \(String(format: "%02d:%02d", hour, minute))"
@@ -170,6 +205,12 @@ enum DateFormatters {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    static let log: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter
     }()
 }
