@@ -1,0 +1,27 @@
+name: Release macOS app
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app bundle
+        run: |
+          chmod +x scripts/package_app.sh
+          ./scripts/package_app.sh
+          cd .build/release
+          ditto -c -k --sequesterRsrc --keepParent MacTaskScheduler.app MacTaskScheduler-${GITHUB_REF_NAME}.zip
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: .build/release/MacTaskScheduler-${{ github.ref_name }}.zip
