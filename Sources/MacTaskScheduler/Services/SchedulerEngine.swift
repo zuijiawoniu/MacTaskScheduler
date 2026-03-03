@@ -5,7 +5,7 @@ final class SchedulerEngine {
     private var timer: Timer?
     private let pollInterval: TimeInterval
 
-    init(pollInterval: TimeInterval = 20) {
+    init(pollInterval: TimeInterval = 1) {
         self.pollInterval = pollInterval
     }
 

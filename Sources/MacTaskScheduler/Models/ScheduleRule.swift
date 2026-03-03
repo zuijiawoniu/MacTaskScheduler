@@ -92,7 +92,8 @@ struct ScheduleRule: Codable, Equatable {
 
         case .everyInterval:
             let step = max(intervalMinutes, 1)
-            return current.addingTimeInterval(TimeInterval(step * 60))
+            let base = Self.alignToWholeSecond(current, calendar: calendar)
+            return base.addingTimeInterval(TimeInterval(step * 60))
 
         case .weekly:
             guard !weekdays.isEmpty else { return nil }
@@ -182,6 +183,15 @@ struct ScheduleRule: Codable, Equatable {
 
     private func normalizedTimeComponents() -> (hour: Int, minute: Int) {
         (min(max(hour, 0), 23), min(max(minute, 0), 59))
+    }
+
+    private static func alignToWholeSecond(_ date: Date, calendar: Calendar) -> Date {
+        var comps = calendar.dateComponents(
+            [.year, .month, .day, .hour, .minute, .second, .nanosecond],
+            from: date
+        )
+        comps.nanosecond = 0
+        return calendar.date(from: comps) ?? date
     }
 }
 
