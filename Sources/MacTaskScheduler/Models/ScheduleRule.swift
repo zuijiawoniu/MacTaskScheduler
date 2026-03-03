@@ -37,6 +37,7 @@ struct ScheduleRule: Codable, Equatable {
     var dayOfMonth: Int
     var hour: Int
     var minute: Int
+    var second: Int
     var everyXDays: Int
     var anchorDate: Date
     var cronExpression: String
@@ -51,6 +52,7 @@ struct ScheduleRule: Codable, Equatable {
         self.dayOfMonth = 1
         self.hour = 9
         self.minute = 0
+        self.second = 0
         self.everyXDays = 1
         self.anchorDate = now
         self.cronExpression = "*/15 * * * *"
@@ -68,6 +70,7 @@ struct ScheduleRule: Codable, Equatable {
         dayOfMonth = try container.decodeIfPresent(Int.self, forKey: .dayOfMonth) ?? 1
         hour = try container.decodeIfPresent(Int.self, forKey: .hour) ?? 9
         minute = try container.decodeIfPresent(Int.self, forKey: .minute) ?? 0
+        second = try container.decodeIfPresent(Int.self, forKey: .second) ?? 0
         everyXDays = try container.decodeIfPresent(Int.self, forKey: .everyXDays) ?? 1
         anchorDate = try container.decodeIfPresent(Date.self, forKey: .anchorDate) ?? now
         cronExpression = try container.decodeIfPresent(String.self, forKey: .cronExpression) ?? "*/15 * * * *"
@@ -107,7 +110,7 @@ struct ScheduleRule: Codable, Equatable {
                     var comp = calendar.dateComponents([.year, .month, .day], from: date)
                     comp.hour = time.hour
                     comp.minute = time.minute
-                    comp.second = 0
+                    comp.second = time.second
                     if let candidate = calendar.date(from: comp), candidate > current {
                         return candidate
                     }
@@ -133,7 +136,7 @@ struct ScheduleRule: Codable, Equatable {
                 comp.day = targetDay
                 comp.hour = time.hour
                 comp.minute = time.minute
-                comp.second = 0
+                comp.second = time.second
 
                 if let candidate = calendar.date(from: comp), candidate > current {
                     return candidate
@@ -145,7 +148,7 @@ struct ScheduleRule: Codable, Equatable {
             let interval = max(everyXDays, 1)
             let time = normalizedTimeComponents()
 
-            guard let anchor = calendar.date(bySettingHour: time.hour, minute: time.minute, second: 0, of: anchorDate) else {
+            guard let anchor = calendar.date(bySettingHour: time.hour, minute: time.minute, second: time.second, of: anchorDate) else {
                 return nil
             }
 
@@ -165,24 +168,24 @@ struct ScheduleRule: Codable, Equatable {
     func descriptionText() -> String {
         switch kind {
         case .once:
-            return "Once @ \(DateFormatters.full.string(from: runAt))"
+            return "Once @ \(DateFormatters.editorDateTime.string(from: runAt))"
         case .everyInterval:
             let value = intervalValue()
             return "Every \(value) \(intervalUnit.rawValue)(s)"
         case .weekly:
             let dayText = weekdays.sorted().map(WeekdayMapper.label(for:)).joined(separator: ",")
-            return "Weekly [\(dayText)] \(String(format: "%02d:%02d", hour, minute))"
+            return "Weekly [\(dayText)] \(String(format: "%02d:%02d:%02d", hour, minute, second))"
         case .monthly:
-            return "Monthly day \(dayOfMonth) \(String(format: "%02d:%02d", hour, minute))"
+            return "Monthly day \(dayOfMonth) \(String(format: "%02d:%02d:%02d", hour, minute, second))"
         case .everyXDays:
-            return "Every \(max(everyXDays, 1)) day(s) \(String(format: "%02d:%02d", hour, minute))"
+            return "Every \(max(everyXDays, 1)) day(s) \(String(format: "%02d:%02d:%02d", hour, minute, second))"
         case .cron:
             return "Cron: \(cronExpression)"
         }
     }
 
-    private func normalizedTimeComponents() -> (hour: Int, minute: Int) {
-        (min(max(hour, 0), 23), min(max(minute, 0), 59))
+    private func normalizedTimeComponents() -> (hour: Int, minute: Int, second: Int) {
+        (min(max(hour, 0), 23), min(max(minute, 0), 59), min(max(second, 0), 59))
     }
 
     private static func alignToWholeSecond(_ date: Date, calendar: Calendar) -> Date {
@@ -221,6 +224,18 @@ enum DateFormatters {
     static let log: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
+
+    static let editorDateTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
+
+    static let editorTime: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
 }

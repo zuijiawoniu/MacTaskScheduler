@@ -105,7 +105,20 @@ struct TaskEditorView: View {
     private var scheduleFields: some View {
         switch draft.schedule.kind {
         case .once:
-            DatePicker(i18n.t("editor.run_at"), selection: $draft.schedule.runAt)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(i18n.t("editor.date"))
+                    AppKitDatePicker(date: runAtDateBinding)
+                        .frame(width: 150, height: 24)
+                    Spacer()
+                }
+                HStack {
+                    Text(i18n.t("editor.time"))
+                    AppKitTimePicker(date: runAtTimeBinding)
+                        .frame(width: 150, height: 24)
+                    Spacer()
+                }
+            }
 
         case .everyInterval:
             HStack {
@@ -156,7 +169,12 @@ struct TaskEditorView: View {
                     .frame(width: 120)
                 Text(i18n.t("editor.interval.day"))
             }
-            DatePicker(i18n.t("editor.anchor_date"), selection: $draft.schedule.anchorDate, displayedComponents: [.date])
+            HStack {
+                Text(i18n.t("editor.anchor_date"))
+                AppKitDatePicker(date: $draft.schedule.anchorDate)
+                    .frame(width: 150, height: 24)
+                Spacer()
+            }
             timePicker
 
         case .cron:
@@ -168,19 +186,69 @@ struct TaskEditorView: View {
     }
 
     private var timePicker: some View {
-        DatePicker(
-            i18n.t("editor.time"),
-            selection: Binding(
-                get: {
-                    Calendar.current.date(from: DateComponents(hour: draft.schedule.hour, minute: draft.schedule.minute)) ?? Date()
-                },
-                set: { newValue in
-                    let comp = Calendar.current.dateComponents([.hour, .minute], from: newValue)
-                    draft.schedule.hour = comp.hour ?? 0
-                    draft.schedule.minute = comp.minute ?? 0
+        HStack {
+            Text(i18n.t("editor.time"))
+            AppKitTimePicker(date: scheduleTimeBinding)
+                .frame(width: 150, height: 24)
+            Spacer()
+        }
+    }
+
+
+    private var runAtDateBinding: Binding<Date> {
+        Binding(
+            get: { draft.schedule.runAt },
+            set: { newDate in
+                let calendar = Calendar.current
+                let datePart = calendar.dateComponents([.year, .month, .day], from: newDate)
+                let timePart = calendar.dateComponents([.hour, .minute, .second], from: draft.schedule.runAt)
+                var merged = DateComponents()
+                merged.year = datePart.year
+                merged.month = datePart.month
+                merged.day = datePart.day
+                merged.hour = timePart.hour
+                merged.minute = timePart.minute
+                merged.second = timePart.second
+                if let date = calendar.date(from: merged) {
+                    draft.schedule.runAt = date
                 }
-            ),
-            displayedComponents: [.hourAndMinute]
+            }
+        )
+    }
+
+    private var runAtTimeBinding: Binding<Date> {
+        Binding(
+            get: { draft.schedule.runAt },
+            set: { newTime in
+                let calendar = Calendar.current
+                let datePart = calendar.dateComponents([.year, .month, .day], from: draft.schedule.runAt)
+                let timePart = calendar.dateComponents([.hour, .minute, .second], from: newTime)
+                var merged = DateComponents()
+                merged.year = datePart.year
+                merged.month = datePart.month
+                merged.day = datePart.day
+                merged.hour = timePart.hour
+                merged.minute = timePart.minute
+                merged.second = timePart.second
+                if let date = calendar.date(from: merged) {
+                    draft.schedule.runAt = date
+                }
+            }
+        )
+    }
+
+    private var scheduleTimeBinding: Binding<Date> {
+        Binding(
+            get: {
+                let calendar = Calendar.current
+                return calendar.date(from: DateComponents(hour: draft.schedule.hour, minute: draft.schedule.minute, second: draft.schedule.second)) ?? Date()
+            },
+            set: { newValue in
+                let comp = Calendar.current.dateComponents([.hour, .minute, .second], from: newValue)
+                draft.schedule.hour = comp.hour ?? 0
+                draft.schedule.minute = comp.minute ?? 0
+                draft.schedule.second = comp.second ?? 0
+            }
         )
     }
 
@@ -218,6 +286,7 @@ struct TaskEditorView: View {
 
         draft.schedule.dayOfMonth = min(max(draft.schedule.dayOfMonth, 1), 31)
         draft.schedule.everyXDays = min(max(draft.schedule.everyXDays, 1), 365)
+        draft.schedule.second = min(max(draft.schedule.second, 0), 59)
 
         onSave(draft)
     }
@@ -261,6 +330,84 @@ struct TaskEditorView: View {
         panel.canCreateDirectories = chooseDirectories
         panel.prompt = "Select"
         return panel.runModal() == .OK ? panel.url?.path : nil
+    }
+}
+
+
+private struct AppKitDatePicker: NSViewRepresentable {
+    @Binding var date: Date
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(date: $date)
+    }
+
+    func makeNSView(context: Context) -> NSDatePicker {
+        let picker = NSDatePicker()
+        picker.datePickerStyle = .textFieldAndStepper
+        picker.datePickerElements = [.yearMonthDay]
+        picker.calendar = Calendar.current
+        picker.timeZone = .current
+        picker.dateValue = date
+        picker.target = context.coordinator
+        picker.action = #selector(Coordinator.valueChanged(_:))
+        return picker
+    }
+
+    func updateNSView(_ nsView: NSDatePicker, context: Context) {
+        if nsView.dateValue != date {
+            nsView.dateValue = date
+        }
+    }
+
+    final class Coordinator: NSObject {
+        @Binding var date: Date
+
+        init(date: Binding<Date>) {
+            _date = date
+        }
+
+        @objc func valueChanged(_ sender: NSDatePicker) {
+            date = sender.dateValue
+        }
+    }
+}
+
+
+private struct AppKitTimePicker: NSViewRepresentable {
+    @Binding var date: Date
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(date: $date)
+    }
+
+    func makeNSView(context: Context) -> NSDatePicker {
+        let picker = NSDatePicker()
+        picker.datePickerStyle = .textFieldAndStepper
+        picker.datePickerElements = [.hourMinuteSecond]
+        picker.calendar = Calendar.current
+        picker.timeZone = .current
+        picker.dateValue = date
+        picker.target = context.coordinator
+        picker.action = #selector(Coordinator.valueChanged(_:))
+        return picker
+    }
+
+    func updateNSView(_ nsView: NSDatePicker, context: Context) {
+        if nsView.dateValue != date {
+            nsView.dateValue = date
+        }
+    }
+
+    final class Coordinator: NSObject {
+        @Binding var date: Date
+
+        init(date: Binding<Date>) {
+            _date = date
+        }
+
+        @objc func valueChanged(_ sender: NSDatePicker) {
+            date = sender.dateValue
+        }
     }
 }
 

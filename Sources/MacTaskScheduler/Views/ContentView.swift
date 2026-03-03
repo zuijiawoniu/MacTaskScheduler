@@ -49,6 +49,18 @@ struct ContentView: View {
                         .onTapGesture(count: 2) {
                             viewModel.openEdit(id: task.id)
                         }
+                        .contextMenu {
+                            Button(i18n.t("ctx.run_now")) {
+                                viewModel.runTaskNow(id: task.id)
+                            }
+                            Button(i18n.t("ctx.duplicate")) {
+                                viewModel.duplicateTask(id: task.id)
+                            }
+                            Divider()
+                            Button(i18n.t("ctx.delete"), role: .destructive) {
+                                viewModel.deleteTask(id: task.id)
+                            }
+                        }
                 }
             }
             .padding()
@@ -288,7 +300,7 @@ private struct TaskRow: View {
             ))
             .labelsHidden()
         case .modifiedAt:
-            Text(DateFormatters.full.string(from: task.modifiedAt))
+            Text(DateFormatters.editorDateTime.string(from: task.modifiedAt))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         case .schedule:
@@ -296,7 +308,7 @@ private struct TaskRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         case .nextRun:
-            Text(task.nextRunAt.map { DateFormatters.full.string(from: $0) } ?? "-")
+            Text(task.nextRunAt.map { DateFormatters.editorDateTime.string(from: $0) } ?? "-")
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }
@@ -335,10 +347,10 @@ private struct TaskDetailView: View {
                         detailLine(title: i18n.t("detail.args"), value: task.arguments.isEmpty ? "-" : task.arguments)
                         detailLine(title: i18n.t("detail.working_dir"), value: task.workingDirectory.isEmpty ? "-" : task.workingDirectory)
                         detailLine(title: i18n.t("detail.schedule"), value: task.schedule.descriptionText())
-                        detailLine(title: i18n.t("detail.next_run"), value: task.nextRunAt.map { DateFormatters.full.string(from: $0) } ?? "-")
-                        detailLine(title: i18n.t("detail.last_run"), value: task.lastRunAt.map { DateFormatters.full.string(from: $0) } ?? "-")
+                        detailLine(title: i18n.t("detail.next_run"), value: task.nextRunAt.map { DateFormatters.editorDateTime.string(from: $0) } ?? "-")
+                        detailLine(title: i18n.t("detail.last_run"), value: task.lastRunAt.map { DateFormatters.editorDateTime.string(from: $0) } ?? "-")
                         detailLine(title: i18n.t("detail.last_exit"), value: task.lastExitCode.map(String.init) ?? "-")
-                        detailLine(title: i18n.t("column.modified"), value: DateFormatters.full.string(from: task.modifiedAt))
+                        detailLine(title: i18n.t("column.modified"), value: DateFormatters.editorDateTime.string(from: task.modifiedAt))
                     }
 
                     HStack {

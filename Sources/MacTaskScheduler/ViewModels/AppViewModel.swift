@@ -67,6 +67,33 @@ final class AppViewModel: ObservableObject {
         store.upsert(mutable)
     }
 
+
+    func deleteTask(id: UUID) {
+        store.delete(ids: [id])
+        if selectedTaskID == id {
+            selectedTaskID = nil
+        }
+    }
+
+    func runTaskNow(id: UUID) {
+        selectedTaskID = id
+        runTask(id: id, source: .manual)
+    }
+
+    func duplicateTask(id: UUID) {
+        guard let sourceTask = store.task(by: id) else { return }
+
+        let copied = TaskItem(
+            name: "\(sourceTask.name) Copy",
+            scriptPath: sourceTask.scriptPath,
+            arguments: sourceTask.arguments,
+            workingDirectory: sourceTask.workingDirectory,
+            isEnabled: false,
+            schedule: sourceTask.schedule
+        )
+        store.upsert(copied)
+        selectedTaskID = copied.id
+    }
     func deleteSelected() {
         guard let selectedTaskID else { return }
         store.delete(ids: [selectedTaskID])
