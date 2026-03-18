@@ -4,7 +4,13 @@ import Combine
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published var searchText = ""
-    @Published var selectedTaskID: UUID?
+    @Published var selectedTaskID: UUID? {
+        didSet {
+            if let selectedTaskID {
+                store.preloadLogsIfNeeded(id: selectedTaskID)
+            }
+        }
+    }
     @Published var showEditor = false
     @Published var editingTask: TaskItem?
 
@@ -85,9 +91,12 @@ final class AppViewModel: ObservableObject {
 
         let copied = TaskItem(
             name: "\(sourceTask.name) Copy",
+            isReminderOnly: sourceTask.isReminderOnly,
+            reminderMessage: sourceTask.reminderMessage,
             scriptPath: sourceTask.scriptPath,
             arguments: sourceTask.arguments,
             workingDirectory: sourceTask.workingDirectory,
+            timeoutSeconds: sourceTask.timeoutSeconds,
             isEnabled: false,
             schedule: sourceTask.schedule
         )
@@ -115,6 +124,11 @@ final class AppViewModel: ObservableObject {
         runTask(id: selectedTaskID, source: .manual)
     }
 
+    func loadSelectedFullLogs() {
+        guard let selectedTaskID else { return }
+        store.loadFullOutputsIfNeeded(id: selectedTaskID)
+    }
+
     func tick() {
         let now = Date()
 
@@ -132,10 +146,35 @@ final class AppViewModel: ObservableObject {
         let runAt = Date()
         guard let running = store.markRunStarted(id: id, startedAt: runAt, source: source) else { return }
 
-        TaskRunner.run(task: task) { [weak self] result in
-            Task { @MainActor in
-                self?.store.updateRunResult(id: id, batchID: running.batchID, startedAt: runAt, source: source, result: result)
+        if task.isReminderOnly {
+            ReminderNotifier.send(task: task, source: source) { [weak self] result in
+                let runResult: TaskRunResult
+                switch result {
+                case .success(let message):
+                    runResult = TaskRunResult(exitCode: 0, output: message, finishedAt: Date())
+                case .failure(let error):
+                    runResult = TaskRunResult(exitCode: 1, output: "Reminder failed: \(error.localizedDescription)", finishedAt: Date())
+                }
+                Task { @MainActor in
+                    self?.store.updateRunResult(id: id, batchID: running.batchID, startedAt: runAt, source: source, result: runResult)
+                }
             }
+            return
         }
+
+        TaskRunner.run(
+            task: task,
+            onOutput: { [weak self] chunk in
+                Task { @MainActor in
+                    self?.store.appendRunOutput(id: id, batchID: running.batchID, chunk: chunk)
+                }
+            },
+            completion: { [weak self] result in
+                Task { @MainActor in
+                    self?.store.updateRunResult(id: id, batchID: running.batchID, startedAt: runAt, source: source, result: result)
+                }
+                ReminderNotifier.sendRunCompletion(task: task, source: source, result: result)
+            }
+        )
     }
 }

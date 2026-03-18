@@ -58,16 +58,33 @@ struct TaskEditorView: View {
                     TextField("", text: $draft.name)
                 }
 
-                labeledField(i18n.t("editor.script_path")) {
-                    pathEditor(path: $draft.scriptPath, chooseDirectories: false, placeholder: "/Users/me/scripts/run.sh")
+                Toggle(i18n.t("editor.reminder_only"), isOn: $draft.isReminderOnly)
+
+                if draft.isReminderOnly {
+                    labeledField(i18n.t("editor.reminder_message")) {
+                        TextField(i18n.t("editor.reminder_message_placeholder"), text: $draft.reminderMessage)
+                    }
+                } else {
+                    labeledField(i18n.t("editor.script_path")) {
+                        pathEditor(path: $draft.scriptPath, chooseDirectories: false, placeholder: "/Users/me/scripts/run.sh")
+                    }
+
+                    labeledField(i18n.t("editor.args")) {
+                        TextField("", text: $draft.arguments)
+                    }
+
+                    labeledField(i18n.t("editor.working_dir")) {
+                        pathEditor(path: $draft.workingDirectory, chooseDirectories: true, placeholder: "/Users/me/project")
+                    }
                 }
 
-                labeledField(i18n.t("editor.args")) {
-                    TextField("", text: $draft.arguments)
-                }
-
-                labeledField(i18n.t("editor.working_dir")) {
-                    pathEditor(path: $draft.workingDirectory, chooseDirectories: true, placeholder: "/Users/me/project")
+                labeledField(i18n.t("editor.timeout")) {
+                    HStack(spacing: 8) {
+                        TextField("", value: $draft.timeoutSeconds, formatter: NumberFormatter.integer)
+                            .frame(width: 120)
+                        Text(i18n.t("editor.timeout_unit"))
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Toggle(i18n.t("enabled"), isOn: $draft.isEnabled)
@@ -268,9 +285,11 @@ struct TaskEditorView: View {
             return
         }
 
-        guard !draft.scriptPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            errorMessage = i18n.t("editor.err.script")
-            return
+        if !draft.isReminderOnly {
+            guard !draft.scriptPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                errorMessage = i18n.t("editor.err.script")
+                return
+            }
         }
 
         if draft.schedule.kind == .weekly && draft.schedule.weekdays.isEmpty {
@@ -287,6 +306,7 @@ struct TaskEditorView: View {
         draft.schedule.dayOfMonth = min(max(draft.schedule.dayOfMonth, 1), 31)
         draft.schedule.everyXDays = min(max(draft.schedule.everyXDays, 1), 365)
         draft.schedule.second = min(max(draft.schedule.second, 0), 59)
+        draft.timeoutSeconds = min(max(draft.timeoutSeconds, 1), 604_800)
 
         onSave(draft)
     }

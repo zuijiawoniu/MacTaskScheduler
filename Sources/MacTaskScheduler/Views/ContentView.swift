@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 enum TaskListColumn: String, CaseIterable, Identifiable {
     case name
@@ -70,11 +71,16 @@ struct ContentView: View {
                 task: viewModel.selectedTaskID.flatMap { id in
                     viewModel.store.task(by: id)
                 },
+                isLogsLoading: viewModel.selectedTaskID.map { viewModel.store.isLogsLoading(id: $0) } ?? false,
+                isFullOutputLoading: viewModel.selectedTaskID.map { viewModel.store.isFullOutputLoading(id: $0) } ?? false,
                 onEnableChanged: { enabled in
                     viewModel.setEnabled(enabled)
                 },
                 onRunNow: {
                     viewModel.runSelectedNow()
+                },
+                onLoadFullLogs: {
+                    viewModel.loadSelectedFullLogs()
                 },
                 onEdit: {
                     viewModel.openEdit()
@@ -84,6 +90,7 @@ struct ContentView: View {
                 }
             )
         }
+        .onMoveCommand(perform: moveSelection)
         .navigationTitle(i18n.t("app.name"))
         .sheet(isPresented: $viewModel.showEditor) {
             TaskEditorView(
@@ -231,6 +238,31 @@ struct ContentView: View {
         case .nextRun: return i18n.t("column.next_run")
         }
     }
+
+    private func moveSelection(_ direction: MoveCommandDirection) {
+        let tasks = sortedTasks
+        guard !tasks.isEmpty else { return }
+
+        let delta: Int
+        switch direction {
+        case .up, .left:
+            delta = -1
+        case .down, .right:
+            delta = 1
+        default:
+            return
+        }
+
+        guard let currentID = viewModel.selectedTaskID,
+              let currentIndex = tasks.firstIndex(where: { $0.id == currentID }) else {
+            viewModel.selectedTaskID = delta > 0 ? tasks.first?.id : tasks.last?.id
+            return
+        }
+
+        let nextIndex = min(max(currentIndex + delta, 0), tasks.count - 1)
+        guard nextIndex != currentIndex else { return }
+        viewModel.selectedTaskID = tasks[nextIndex].id
+    }
 }
 
 private enum ColumnWidthCalculator {
@@ -317,15 +349,27 @@ private struct TaskRow: View {
 
 private struct TaskDetailView: View {
     @EnvironmentObject private var i18n: I18N
+    @State private var showAllLogs = false
+    @State private var notificationStatusText = ""
 
     let task: TaskItem?
+    let isLogsLoading: Bool
+    let isFullOutputLoading: Bool
     let onEnableChanged: (Bool) -> Void
     let onRunNow: () -> Void
+    let onLoadFullLogs: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         if let task {
+            let logData = LogRenderCache.shared.logDisplayData(
+                task: task,
+                showAll: showAllLogs,
+                previewLogCount: 20,
+                previewMaxChars: 128 * 1024
+            )
+            let largeLogCount = task.logs.filter { $0.fullOutputRef != nil }.count
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack {
@@ -343,9 +387,31 @@ private struct TaskDetailView: View {
                     }
 
                     Group {
-                        detailLine(title: i18n.t("detail.script"), value: task.scriptPath)
-                        detailLine(title: i18n.t("detail.args"), value: task.arguments.isEmpty ? "-" : task.arguments)
-                        detailLine(title: i18n.t("detail.working_dir"), value: task.workingDirectory.isEmpty ? "-" : task.workingDirectory)
+                        detailLine(title: i18n.t("detail.mode"), value: task.isReminderOnly ? i18n.t("detail.mode_reminder") : i18n.t("detail.mode_script"))
+                        if task.isReminderOnly {
+                            detailLine(title: i18n.t("detail.reminder_message"), value: task.reminderMessage.isEmpty ? task.name : task.reminderMessage)
+                            HStack {
+                                Text("\(i18n.t("detail.notification_status")) \(notificationStatusText)")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button(i18n.t("detail.refresh_status")) {
+                                    refreshNotificationStatus()
+                                }
+                            }
+                            HStack {
+                                Text(i18n.t("detail.notification_settings_hint"))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button(i18n.t("detail.open_notification_settings")) {
+                                    SettingsOpener.openNotificationSettings()
+                                }
+                            }
+                        } else {
+                            detailLine(title: i18n.t("detail.script"), value: task.scriptPath)
+                            detailLine(title: i18n.t("detail.args"), value: task.arguments.isEmpty ? "-" : task.arguments)
+                            detailLine(title: i18n.t("detail.working_dir"), value: task.workingDirectory.isEmpty ? "-" : task.workingDirectory)
+                        }
+                        detailLine(title: i18n.t("detail.timeout"), value: "\(task.timeoutSeconds) \(i18n.t("editor.timeout_unit"))")
                         detailLine(title: i18n.t("detail.schedule"), value: task.schedule.descriptionText())
                         detailLine(title: i18n.t("detail.next_run"), value: task.nextRunAt.map { DateFormatters.editorDateTime.string(from: $0) } ?? "-")
                         detailLine(title: i18n.t("detail.last_run"), value: task.lastRunAt.map { DateFormatters.editorDateTime.string(from: $0) } ?? "-")
@@ -369,15 +435,100 @@ private struct TaskDetailView: View {
                     Text(i18n.t("detail.logs"))
                         .font(.headline)
 
-                    ScrollView {
-                        Text(task.logsDisplayText.isEmpty ? i18n.t("detail.no_logs") : task.logsDisplayText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
+                    if logData.isTruncated {
+                        let prefix = i18n.t("detail.logs_preview_prefix")
+                        let suffix = i18n.t("detail.logs_preview_suffix")
+                        HStack {
+                            Text("\(prefix) \(logData.shownCount)/\(logData.totalCount) \(suffix) (\(logData.displayBytesKB) KB)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(i18n.t("detail.load_all_logs")) {
+                                showAllLogs = true
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    } else if showAllLogs && logData.totalCount > 0 {
+                        let prefix = i18n.t("detail.showing_all_logs")
+                        let suffix = i18n.t("detail.logs_preview_suffix")
+                        HStack {
+                            Text("\(prefix) \(logData.totalCount) \(suffix)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button(i18n.t("detail.show_recent_logs")) {
+                                showAllLogs = false
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+
+                    if largeLogCount > 0 {
+                        HStack {
+                            Text("\(i18n.t("detail.large_logs_trimmed_prefix")) \(largeLogCount) \(i18n.t("detail.large_logs_trimmed_suffix"))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            if isFullOutputLoading {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                    Text(i18n.t("detail.logs_loading"))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Button(i18n.t("detail.load_full_large_logs")) {
+                                    onLoadFullLogs()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            if isLogsLoading && logData.displayText.isEmpty {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .scaleEffect(0.8)
+                                    Text(i18n.t("detail.logs_loading"))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            } else if logData.displayText.isEmpty {
+                                Text(i18n.t("detail.no_logs"))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            } else {
+                                StyledLogText(logText: logData.displayText)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .font(.system(.body, design: .monospaced))
+                                    .textSelection(.enabled)
+                            }
+                            Color.clear
+                                .frame(height: 1)
+                                .id("log-bottom-\(task.id.uuidString)")
+                        }
+                        .onAppear {
+                            proxy.scrollTo("log-bottom-\(task.id.uuidString)", anchor: .bottom)
+                        }
+                        .onChange(of: logData.displayText) { _, _ in
+                            proxy.scrollTo("log-bottom-\(task.id.uuidString)", anchor: .bottom)
+                        }
                     }
                     .frame(minHeight: 240)
                 }
                 .padding(24)
+            }
+            .onChange(of: task.id) { _, _ in
+                showAllLogs = false
+                refreshNotificationStatus()
+            }
+            .onAppear {
+                refreshNotificationStatus()
             }
         } else {
             VStack(spacing: 12) {
@@ -402,6 +553,151 @@ private struct TaskDetailView: View {
             Text(value)
                 .textSelection(.enabled)
         }
+    }
+
+    private func refreshNotificationStatus() {
+        ReminderNotifier.getAuthorizationStatus { status in
+            DispatchQueue.main.async {
+                notificationStatusText = notificationStatusLabel(status)
+            }
+        }
+    }
+
+    private func notificationStatusLabel(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .authorized:
+            return i18n.t("detail.notification_status_authorized")
+        case .denied:
+            return i18n.t("detail.notification_status_denied")
+        case .notDetermined:
+            return i18n.t("detail.notification_status_not_determined")
+        case .provisional:
+            return i18n.t("detail.notification_status_provisional")
+        case .ephemeral:
+            return i18n.t("detail.notification_status_ephemeral")
+        @unknown default:
+            return i18n.t("detail.notification_status_unknown")
+        }
+    }
+}
+
+private struct StyledLogText: View {
+    let logText: String
+
+    var body: some View {
+        composeText()
+    }
+
+    private func composeText() -> Text {
+        let chunks = LogRenderCache.shared.parsedChunks(for: logText)
+        guard !chunks.isEmpty else { return Text(logText) }
+
+        var text = Text("")
+        for chunk in chunks {
+            let color: Color
+            switch chunk.stream {
+            case .stderr:
+                color = .red
+            case .stdout:
+                color = .primary
+            case .system:
+                color = .secondary
+            }
+            text = text + Text(chunk.text).foregroundColor(color)
+        }
+        return text
+    }
+}
+
+private struct LogDisplayData {
+    let displayText: String
+    let shownCount: Int
+    let totalCount: Int
+    let isTruncated: Bool
+
+    var displayBytesKB: Int {
+        max(1, displayText.utf8.count / 1024)
+    }
+}
+
+@MainActor
+private final class LogRenderCache {
+    static let shared = LogRenderCache()
+
+    private var textCache: [String: LogDisplayData] = [:]
+    private var parsedCache: [ParsedCacheKey: [LogChunk]] = [:]
+    private let maxTextEntries = 48
+    private let maxParsedEntries = 48
+    private let parsedCacheMaxTextLength = 200_000
+
+    func logDisplayData(task: TaskItem, showAll: Bool, previewLogCount: Int, previewMaxChars: Int) -> LogDisplayData {
+        let key = "\(task.id.uuidString)|\(task.modifiedAt.timeIntervalSince1970)|\(showAll ? 1 : 0)|\(previewLogCount)|\(previewMaxChars)|\(task.logs.count)"
+        if let cached = textCache[key] {
+            return cached
+        }
+
+        // Logs are persisted newest-first; avoid re-sorting on every render.
+        let ordered = task.logs
+        let totalCount = ordered.count
+        let selected = showAll ? ordered : Array(ordered.prefix(previewLogCount))
+
+        let separator = "\n\n----------------\n\n"
+        let rawText = selected.map { $0.toDisplayText() }.joined(separator: separator)
+        var displayText = rawText
+        var truncatedBySize = false
+        if !showAll && displayText.count > previewMaxChars {
+            truncatedBySize = true
+            displayText = "...\n" + String(displayText.suffix(previewMaxChars))
+        }
+
+        let truncatedByCount = !showAll && totalCount > selected.count
+        let data = LogDisplayData(
+            displayText: displayText,
+            shownCount: selected.count,
+            totalCount: totalCount,
+            isTruncated: truncatedByCount || truncatedBySize
+        )
+        textCache[key] = data
+        trimTextCacheIfNeeded()
+        return data
+    }
+
+    func parsedChunks(for text: String) -> [LogChunk] {
+        if text.count > parsedCacheMaxTextLength {
+            return LogMarkup.parse(text)
+        }
+
+        let key = ParsedCacheKey(text: text)
+        if let cached = parsedCache[key] {
+            return cached
+        }
+        let parsed = LogMarkup.parse(text)
+        parsedCache[key] = parsed
+        trimParsedCacheIfNeeded()
+        return parsed
+    }
+
+    private func trimTextCacheIfNeeded() {
+        if textCache.count > maxTextEntries, let firstKey = textCache.keys.first {
+            textCache.removeValue(forKey: firstKey)
+        }
+    }
+
+    private func trimParsedCacheIfNeeded() {
+        if parsedCache.count > maxParsedEntries, let firstKey = parsedCache.keys.first {
+            parsedCache.removeValue(forKey: firstKey)
+        }
+    }
+
+}
+
+private struct ParsedCacheKey: Hashable {
+    let digest: Int
+    let length: Int
+
+    init(text: String) {
+        self.digest = text.hashValue
+        self.length = text.count
     }
 }
 

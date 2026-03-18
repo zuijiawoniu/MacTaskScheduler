@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="MacTaskScheduler"
+BUNDLE_ID="${BUNDLE_ID:-com.local.${APP_NAME}}"
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 BUILD_DIR="$ROOT_DIR/.build/release"
 APP_DIR="$BUILD_DIR/${APP_NAME}.app"
 CONTENTS_DIR="$APP_DIR/Contents"
@@ -51,7 +53,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.local.${APP_NAME}</string>
+    <string>${BUNDLE_ID}</string>
     <key>CFBundleName</key>
     <string>${APP_NAME}</string>
     <key>CFBundleIconFile</key>
@@ -73,4 +75,18 @@ PLIST
 cp "$BUILD_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
+codesign --force --deep --timestamp=none --sign "$SIGN_IDENTITY" --identifier "$BUNDLE_ID" "$APP_DIR"
+
+PLIST_BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$CONTENTS_DIR/Info.plist")"
+SIGNED_BUNDLE_ID="$(codesign -dv --verbose=4 "$APP_DIR" 2>&1 | awk -F= '/^Identifier=/{print $2; exit}')"
+
+if [[ "$PLIST_BUNDLE_ID" != "$SIGNED_BUNDLE_ID" ]]; then
+    echo "Bundle identifier mismatch after signing"
+    echo "Info.plist: $PLIST_BUNDLE_ID"
+    echo "CodeSign  : $SIGNED_BUNDLE_ID"
+    exit 1
+fi
+
 echo "Packaged app: $APP_DIR"
+echo "Bundle ID: $PLIST_BUNDLE_ID"
+echo "Sign identity: $SIGN_IDENTITY"

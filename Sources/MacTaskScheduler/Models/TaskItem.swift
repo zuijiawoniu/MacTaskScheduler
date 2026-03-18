@@ -23,6 +23,7 @@ struct ExecutionLog: Codable, Equatable, Identifiable {
     var finishedAt: Date
     var exitCode: Int32
     var output: String
+    var fullOutputRef: String?
 
     init(
         id: UUID = UUID(),
@@ -32,7 +33,8 @@ struct ExecutionLog: Codable, Equatable, Identifiable {
         startedAt: Date,
         finishedAt: Date,
         exitCode: Int32,
-        output: String
+        output: String,
+        fullOutputRef: String? = nil
     ) {
         self.id = id
         self.roundNumber = roundNumber
@@ -42,6 +44,7 @@ struct ExecutionLog: Codable, Equatable, Identifiable {
         self.finishedAt = finishedAt
         self.exitCode = exitCode
         self.output = output
+        self.fullOutputRef = fullOutputRef
     }
 
     init(from decoder: Decoder) throws {
@@ -54,6 +57,7 @@ struct ExecutionLog: Codable, Equatable, Identifiable {
         finishedAt = try container.decodeIfPresent(Date.self, forKey: .finishedAt) ?? startedAt
         exitCode = try container.decodeIfPresent(Int32.self, forKey: .exitCode) ?? 0
         output = try container.decodeIfPresent(String.self, forKey: .output) ?? ""
+        fullOutputRef = try container.decodeIfPresent(String.self, forKey: .fullOutputRef)
     }
 
     func toDisplayText() -> String {
@@ -68,11 +72,16 @@ struct ExecutionLog: Codable, Equatable, Identifiable {
 }
 
 struct TaskItem: Identifiable, Codable, Equatable {
+    static let defaultTimeoutSeconds: Int = 7200
+
     var id: UUID
     var name: String
+    var isReminderOnly: Bool
+    var reminderMessage: String
     var scriptPath: String
     var arguments: String
     var workingDirectory: String
+    var timeoutSeconds: Int
     var isEnabled: Bool
     var schedule: ScheduleRule
     var nextRunAt: Date?
@@ -87,9 +96,12 @@ struct TaskItem: Identifiable, Codable, Equatable {
     init(
         id: UUID = UUID(),
         name: String,
+        isReminderOnly: Bool = false,
+        reminderMessage: String = "",
         scriptPath: String,
         arguments: String = "",
         workingDirectory: String = "",
+        timeoutSeconds: Int = TaskItem.defaultTimeoutSeconds,
         isEnabled: Bool = true,
         schedule: ScheduleRule,
         nextRunAt: Date? = nil,
@@ -103,9 +115,12 @@ struct TaskItem: Identifiable, Codable, Equatable {
     ) {
         self.id = id
         self.name = name
+        self.isReminderOnly = isReminderOnly
+        self.reminderMessage = reminderMessage
         self.scriptPath = scriptPath
         self.arguments = arguments
         self.workingDirectory = workingDirectory
+        self.timeoutSeconds = max(1, timeoutSeconds)
         self.isEnabled = isEnabled
         self.schedule = schedule
         self.nextRunAt = nextRunAt
@@ -123,9 +138,12 @@ struct TaskItem: Identifiable, Codable, Equatable {
 
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        isReminderOnly = try container.decodeIfPresent(Bool.self, forKey: .isReminderOnly) ?? false
+        reminderMessage = try container.decodeIfPresent(String.self, forKey: .reminderMessage) ?? ""
         scriptPath = try container.decodeIfPresent(String.self, forKey: .scriptPath) ?? ""
         arguments = try container.decodeIfPresent(String.self, forKey: .arguments) ?? ""
         workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory) ?? ""
+        timeoutSeconds = max(1, try container.decodeIfPresent(Int.self, forKey: .timeoutSeconds) ?? Self.defaultTimeoutSeconds)
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         schedule = try container.decodeIfPresent(ScheduleRule.self, forKey: .schedule) ?? ScheduleRule(kind: .once)
         nextRunAt = try container.decodeIfPresent(Date.self, forKey: .nextRunAt)
